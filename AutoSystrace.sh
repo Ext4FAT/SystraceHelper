@@ -1,7 +1,7 @@
 #!/bin/bash
 # -------------------------------------------------------------------------------
 # Filename:    AutoGetHtrace.sh
-# Revision:    1.1
+# Revision:    1.0
 # Date:        2017/08/25
 # Author:      _IDLER_
 # Email:       exFAT@foxmail.com
