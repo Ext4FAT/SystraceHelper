@@ -15,7 +15,7 @@
 # -------------------------------------------------------------------------------
 # Version 1.0
 # Just catch doFrame and try to determine which is the last frame 
-# when app starts
+# when app starts, parse one html file within one second
 # -------------------------------------------------------------------------------
 
 # -------------------------------------------------------------------------------
@@ -31,13 +31,18 @@ import collections
 # Macro 
 # -------------------------------------------------------------------------------
 _APP_BEGIN_TAG_ = 'ActivityThreadMain'
-_FUNC_BEGIN_TAG_ = "tracing_mark_write: B"
-_FUNC_END_TAG_ = "tracing_mark_write: E"
+#_FUNC_BEGIN_TAG_ = "tracing_mark_write: B"
+#_FUNC_END_TAG_ = "tracing_mark_write: E"
+_FUNC_BEGIN_TAG_ = ": B"
+_FUNC_END_TAG_ = ": E"
 _DO_FRAME_TAG_ = '#doFrame'
-_KEYWORDS_ = ['#doFrame']
-#_KEYWORDS_ = ['bindApplication', 'activityStart', '#doFrame'] 
+#_KEYWORDS_ = ['#doFrame']
+_KEYWORDS_ = ['bindApplication', 'activityStart', 'updateResourceParamsLocked', 'onSurfaceCreated', 'Choreographer#doFrame'] #'binder transaction' 
 _SEGMENT_SIZE_ = 6
 _STD_DIFF_THRESHOLD_ = 0.005
+_AVG_DIFF_THRESHOLD_ = 0.01
+_STD_PERCENT_DIFF_THRESHOLD_ = 0.5
+_AVG_PERCENT_DIFF_THRESHOLD_ = 0.5
 _TOP_K_ = 300
 
 # -------------------------------------------------------------------------------
@@ -89,19 +94,41 @@ def calcSigma(segment):
 # -------------------------------------------------------------------------------
 # Statistics: Calulate the whole app start time
 # ------------------------------------------------------------------------------- 
+def keyFunctionDuration(RESULT):
+    funcDuration = collections.OrderedDict()
+    for keyword in _KEYWORDS_:
+        if (keyword not in RESULT.keys()):
+            funcDuration[keyword] = 0.0
+            continue    
+        funcTagList = RESULT[keyword]
+        duration = 0.0
+        for funcTag in funcTagList:
+            duration += funcTag.duration
+        funcDuration[keyword] = duration
+    return funcDuration        
+
+# -------------------------------------------------------------------------------
+# Statistics: Calulate the whole app start time
+# ------------------------------------------------------------------------------- 
 def AppStartTime(RESULT):
     bFrame = RESULT[_APP_BEGIN_TAG_][0]
     eFrame = findLastDoFrame(RESULT)
     return eFrame.end - bFrame.begin
-    
+
 def findLastDoFrame(RESULT):
     doFrameTags = [key for key in RESULT.keys() if _DO_FRAME_TAG_ in key]
     if (len(doFrameTags) == 0):
         return FuncTag()
-    frameList = RESULT[doFrameTags[0]]
-    last = slideTest(frameList)
+    doFrameTag = doFrameTags[0]
+    frameList = RESULT[doFrameTag]
+    last, index = slideTest(frameList)
+    RESULT[doFrameTag] = trimDoFrame(frameList, index)
     return last
 
+def trimDoFrame(frameList, index):
+    return frameList[:index+1]
+
+# 
 def slideTest(frameList):
     pre = 0.0
     listLen = len(frameList)
@@ -109,10 +136,12 @@ def slideTest(frameList):
     for i in range(0, listLen - _SEGMENT_SIZE_):
         segment = [frame.duration for frame in frameList[i:i+_SEGMENT_SIZE_]]
         # TODO: Add new strategy to determine last stamp
+        # Rules
         std = calcSigma(segment)
         if ((std - pre) > _STD_DIFF_THRESHOLD_):
-            return frameList[i+_SEGMENT_SIZE_-1]
-    return FuncTag()
+            index = i+_SEGMENT_SIZE_-1
+            return frameList[i+_SEGMENT_SIZE_-1], index
+    return FuncTag(), -1
 
 # -------------------------------------------------------------------------------
 # Worker: parse Systrace log 
@@ -128,11 +157,17 @@ def parseSystrace(filepath):
     for i in range(0, _TOP_K_):
         funcTag, bstamp = getFuncTagAndTimestamp(curfile, app_tag)
         estamp = findEndTimestamp(curfile, app_tag)
+        if (funcTag not in RESULT.keys()):
+             RESULT[funcTag] = []
+        RESULT[funcTag].append(FuncTag(funcTag, bstamp, estamp))
+    curfile.close()
+        '''
         for keyword in _KEYWORDS_:
             if keyword in funcTag:
                 if (funcTag not in RESULT.keys()):
                     RESULT[funcTag] = []
                 RESULT[funcTag].append(FuncTag(funcTag, bstamp, estamp))
+        '''
     return RESULT
 
 def getAppTagAndTimestamp(file, firstTag):
@@ -175,15 +210,31 @@ def findEndTimestamp(curfile, appTag):
 def LOOP(DIR):
     fileList = filter(_isHtml_, os.listdir(DIR))
     for index, filename in enumerate(fileList):
-        print(index, '[', filename, ']')
         filepath = os.path.join(DIR, filename)
         RESULT = parseSystrace(filepath)
         #PRINT(RESULT)    
         appTime = AppStartTime(RESULT)
-        print(appTime)    
+        funcDuration = keyFunctionDuration(RESULT)
+        HEADER_PRINT()
+        APP_PRINT(filename, appTime)
+        FUNCTION_PRINT(funcDuration)
     return 0
 
 # TODO: output to file
+def HEADER_PRINT():
+    print('Filename', 'AppTime', sep=',', end=',')
+    for keyword in _KEYWORDS_:
+        print(keyword, end=',')
+    print('Last-DoFrame-Index')
+
+def APP_PRINT(filename, appTime):
+    print('['+filename+']', appTime, sep=',', end=',')
+
+def FUNCTION_PRINT(funcDuration):
+    for k, v in funcDuration.items():
+        print(v, end=',')
+    print()
+
 def PRINT(RESULT):
     for k, vlist in RESULT.items():
         print(k, len(vlist))
@@ -194,9 +245,11 @@ def PRINT(RESULT):
 # -------------------------------------------------------------------------------
 # main
 # -------------------------------------------------------------------------------  
-def main():
+def main():  
     DIR = './traces' if len(sys.argv) < 2 else sys.argv[1]
+    print('Start parsing ...')
     LOOP(DIR)
+    print('End parsing ...')
     return 0
 
 if __name__ == "__main__":
