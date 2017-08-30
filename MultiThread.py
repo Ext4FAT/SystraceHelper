@@ -32,13 +32,12 @@ def myTask(filePath):
     time.sleep(1)
     print(filePath)
 
-def multiProc():
+def multiProc(fileList):
     cpu = getCpuKernelCount()
     memory = getLeftMemory()
     processNum = cpu - 1 
     procPool = Pool(processNum)
-    for i in range(100):
-        filePath = str(i)
+    for filePath in fileList:
         procPool.apply_async(myTask, (filePath,))
     procPool.close()
     procPool.join()
@@ -56,7 +55,7 @@ def getLeftMemory():
     return 0
 
 def main():  
-    multiProc()
+    multiProc([str(i) for i in range(0, 100)])
 
 if __name__ == "__main__":
     main()
